@@ -26,7 +26,7 @@ static size_t min(size_t a,size_t b){
 static bool zless(AVLNode* node1,double score,const char* name,size_t len){
     ZNode* znode1=container_of(node1,ZNode,tree);
     if(znode1->score!=score){
-        return score>znode1->score;
+        return znode1->score<score;
     }
     int rv=memcmp(znode1->name,name,min(znode1->len,len));
     if(rv!=0){
@@ -41,15 +41,7 @@ static bool zless(AVLNode* node1,AVLNode* node2){
 }
 
 static void tree_insert(ZSet* zset,ZNode* node){
-    AVLNode* parent=nullptr;
-    AVLNode** from=&zset->root;
-    while(*from){
-        parent=*from;
-        from=zless(&node->tree,parent)?&parent->left:&parent->right;
-    }
-    *from=&node->tree;
-    node->tree.parent=parent;
-    zset->root=avl_fix(&node->tree);
+    zset->root = avl_insert(zset->root, &node->tree, zless);
 }
 
 //update the score of node
@@ -57,10 +49,12 @@ static void zset_update(ZSet* zset,ZNode* node,double score){
     if(node->score==score){
         return;
     }
-    zset->root=avl_del(&node->tree);
+
+    // Simple approach: always remove and re-insert
+    zset->root = avl_del(&node->tree);
     avl_node_init(&node->tree);
-    node->score=score;
-    tree_insert(zset,node);
+    node->score = score;
+    tree_insert(zset, node);
 }
 
 struct HKey{
@@ -120,13 +114,24 @@ ZNode* zset_lookge(ZSet* zset, double score,const char* name, size_t len){
 }
 
 void zset_delete(ZSet* zset, ZNode* node){
+    if (!zset || !node) return;
+
+    // Remove from hashtable first
     HKey hkey;
     hkey.len=node->len;
     hkey.name=node->name;
     hkey.node.hcode=node->hmap.hcode;
     HNode* found=hm_delete(&zset->hmap,&hkey.node,&hcmp);
-    assert(found);
-    zset->root=avl_del(&node->tree);
+
+    if (!found) {
+        // Node not found in hashtable, something is wrong
+        return;
+    }
+
+    // Remove from tree
+    zset->root = avl_del(&node->tree);
+
+    // Free the node
     znode_del(node);
 }
 
@@ -146,7 +151,98 @@ static void tree_dispose(AVLNode* node){
 }
 
 void zset_clear(ZSet* zset){
-    hm_clear(&zset->hmap);
+    if (!zset) return;
+
+    // First dispose of the tree nodes (this frees the actual node memory)
     tree_dispose(zset->root);
-    zset->root=nullptr;
+    zset->root = nullptr;
+
+    // Then clear hashtable (this only clears the bucket arrays)
+    hm_clear(&zset->hmap);
+}
+
+size_t zset_rank(ZSet* zset, const char* name, size_t len){
+    if (!zset || !zset->root) return 0;
+
+    ZNode* node = zset_lookup(zset, name, len);
+    if (!node) return 0;
+
+    size_t rank = 0;
+    AVLNode* current = &node->tree;
+
+    // Add size of left subtree
+    rank += avl_size(current->left);
+
+    // Traverse up to root, adding sizes of left subtrees when coming from right
+    while (current->parent) {
+        AVLNode* parent = current->parent;
+        if (parent->right == current) {
+            // Coming from right child, add left subtree + parent
+            rank += avl_size(parent->left) + 1;
+        }
+        current = parent;
+    }
+
+    return rank + 1; // 1-based ranking
+}
+
+ZNode* zset_nth(ZSet* zset, size_t rank){
+    if (!zset || !zset->root || rank == 0) return nullptr;
+
+    AVLNode* current = zset->root;
+    size_t current_rank = rank;
+
+    while (current) {
+        size_t left_size = avl_size(current->left);
+
+        if (current_rank == left_size + 1) {
+            // Found the target node
+            return container_of(current, ZNode, tree);
+        } else if (current_rank <= left_size) {
+            // Target is in left subtree
+            current = current->left;
+        } else {
+            // Target is in right subtree
+            current_rank -= (left_size + 1);
+            current = current->right;
+        }
+    }
+
+    return nullptr;
+}
+
+size_t zset_card(ZSet* zset){
+    if (!zset || !zset->root) return 0;
+    return avl_size(zset->root);
+}
+
+int zset_range(ZSet* zset, size_t start, size_t count, ZNode** results){
+    if (!zset || !results || count == 0) return 0;
+
+    size_t collected = 0;
+    for (size_t i = 0; i < count && collected < count; i++) {
+        ZNode* node = zset_nth(zset, start + i + 1); // +1 for 1-based ranking
+        if (!node) break;
+        results[collected++] = node;
+    }
+
+    return collected;
+}
+
+int zset_range_by_score(ZSet* zset, double min_score, double max_score, ZNode** results, size_t max_results){
+    if (!zset || !results || max_results == 0) return 0;
+
+    // Find first node >= min_score
+    ZNode* start_node = zset_lookge(zset, min_score, "", 0);
+    if (!start_node) return 0;
+
+    size_t collected = 0;
+    ZNode* current = start_node;
+
+    while (current && current->score <= max_score && collected < max_results) {
+        results[collected++] = current;
+        current = container_of(avl_next(&current->tree), ZNode, tree);
+    }
+
+    return collected;
 }

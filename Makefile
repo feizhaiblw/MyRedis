@@ -1,16 +1,20 @@
 # Redis项目 Makefile
 
 CXX = g++
-CXXFLAGS = -Wall -Wextra -std=c++11 -g -O2
+CXXFLAGS = -Wall -Wextra -std=c++11 -g -O2 -pthread
 INCLUDES = -Iinclude
+CPPFLAGS = $(INCLUDES)
+DEPFLAGS = -MMD -MP
+TEST_CPPFLAGS = $(CPPFLAGS) -I. -I$(TESTDIR)
 SRCDIR = src
 OBJDIR = obj
+TESTDIR = test
 SOURCES = $(wildcard $(SRCDIR)/*.cpp)
 OBJECTS = $(SOURCES:$(SRCDIR)/%.cpp=$(OBJDIR)/%.o)
+DEPS = $(OBJECTS:.o=.d)
 TARGET = server
-TEST_TARGET = test_buffer
 
-.PHONY: all clean test test-buffer test-avltree
+.PHONY: all clean test test-avltree test-zset test-ttl test-threadpool test-zset-server run help
 
 all: $(TARGET)
 
@@ -20,7 +24,7 @@ $(OBJDIR):
 
 # 编译目标文件
 $(OBJDIR)/%.o: $(SRCDIR)/%.cpp | $(OBJDIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+	$(CXX) $(CXXFLAGS) $(CPPFLAGS) $(DEPFLAGS) -c $< -o $@
 
 # 链接生成可执行文件
 $(TARGET): $(OBJECTS)
@@ -28,26 +32,50 @@ $(TARGET): $(OBJECTS)
 
 # 清理编译文件
 clean:
-	rm -rf $(OBJDIR) $(TARGET) $(TEST_TARGET) test_avltree test_avltree_simple
+	rm -rf $(OBJDIR) $(TARGET) test_avl_complete test_zset_complete test_ttl test_thread_pool test_zset_server
 
 # 编译并运行所有测试
-test: test-buffer test-avltree
+test: test-avltree test-zset test-ttl test-threadpool test-zset-server
 
-# 编译并运行Buffer测试
-test-buffer: $(TEST_TARGET)
-	./$(TEST_TARGET)
+# 编译并运行AVL树完整测试
+test-avltree: test_avl_complete
+	./test_avl_complete
 
-# 编译并运行AVL树测试
-test-avltree: test_avltree_simple
-	./test_avltree_simple
+# 编译并运行ZSet完整测试
+test-zset: test_zset_complete
+	./test_zset_complete
 
-# 编译Buffer测试程序
-$(TEST_TARGET): test_buffer.cpp $(SRCDIR)/buffer.cpp
-	$(CXX) $(CXXFLAGS) -I. $^ -o $@
+# 编译AVL树完整测试程序
+test_avl_complete: $(TESTDIR)/test_avl_complete.cpp $(SRCDIR)/avltree.cpp
+	$(CXX) $(CXXFLAGS) $(TEST_CPPFLAGS) $^ -o $@
 
-# 编译AVL树简单测试程序
-test_avltree_simple: test_avltree_simple.cpp $(SRCDIR)/avltree.cpp
-	$(CXX) $(CXXFLAGS) -I. $^ -o $@
+# 编译ZSet完整测试程序
+test_zset_complete: $(TESTDIR)/test_zset_complete.cpp $(SRCDIR)/zset.cpp $(SRCDIR)/avltree.cpp $(SRCDIR)/hashtable.cpp
+	$(CXX) $(CXXFLAGS) $(TEST_CPPFLAGS) $^ -o $@
+
+# 编译TTL测试程序
+test_ttl: $(TESTDIR)/test_ttl.cpp $(SRCDIR)/commands.cpp $(SRCDIR)/db.cpp $(SRCDIR)/buffer.cpp \
+	$(SRCDIR)/response.cpp $(SRCDIR)/hashtable.cpp $(SRCDIR)/minheap.cpp \
+	$(SRCDIR)/zset.cpp $(SRCDIR)/avltree.cpp
+	$(CXX) $(CXXFLAGS) $(TEST_CPPFLAGS) $^ -o $@
+
+# 运行TTL测试
+test-ttl: test_ttl
+	./test_ttl
+
+# 编译线程池测试程序
+test_thread_pool: $(TESTDIR)/test_thread_pool.cpp $(SRCDIR)/thread_pool.cpp
+	$(CXX) $(CXXFLAGS) $(TEST_CPPFLAGS) $^ -o $@
+
+# 运行线程池测试
+test-threadpool: test_thread_pool
+	./test_thread_pool
+
+test_zset_server: $(TESTDIR)/test_zset_server.cpp $(SRCDIR)/zset.cpp $(SRCDIR)/avltree.cpp $(SRCDIR)/hashtable.cpp
+	$(CXX) $(CXXFLAGS) $(TEST_CPPFLAGS) $^ -o $@
+
+test-zset-server: test_zset_server
+	./test_zset_server
 
 # 运行服务器
 run: $(TARGET)
@@ -60,6 +88,11 @@ help:
 	@echo "  clean       - 清理编译文件"
 	@echo "  run         - 编译并运行服务器"
 	@echo "  test        - 运行所有测试"
-	@echo "  test-buffer - 运行Buffer模块测试"
-	@echo "  test-avltree- 运行AVL树模块测试"
+	@echo "  test-avltree- 运行AVL树完整测试"
+	@echo "  test-zset   - 运行ZSet完整测试"
+	@echo "  test-ttl    - 运行TTL测试"
+	@echo "  test-threadpool - 运行线程池测试"
+	@echo "  test-zset-server - 运行ZSet服务端函数测试"
 	@echo "  help        - 显示此帮助信息"
+
+-include $(DEPS)
