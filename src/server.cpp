@@ -8,6 +8,7 @@
 #include <vector>
 #include <limits>
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <memory>
 #include <pthread.h>
@@ -15,6 +16,7 @@
 #include <arpa/inet.h>
 #include <cassert>
 #include <cstdio>
+#include <cstdlib>
 #include <errno.h>
 #include "../include/buffer.h"
 #include "../include/common.h"
@@ -371,15 +373,16 @@ static void handle_write(Conn* conn) {
 }
 
 static void handle_read(Conn* conn) {
-    uint8_t buf[MAX_MASSEGE];
-    ssize_t n = read(conn->fd, buf, MAX_MASSEGE);
+    static constexpr size_t kReadChunk = 4 * 1024;
+    std::array<uint8_t, kReadChunk> buf{};
+    ssize_t n = read(conn->fd, buf.data(), buf.size());
     if (n <= 0) {
         if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
             conn->want_close.store(true, std::memory_order_release);
         }
         return;
     }
-    buf_append(&conn->coming_data, buf, n);
+    buf_append(&conn->coming_data, buf.data(), static_cast<size_t>(n));
     touch_conn(conn);
     while(try_one_request(conn)){};//pipelines
     conn->want_read.store(true, std::memory_order_release);
@@ -402,7 +405,17 @@ static Conn* handle_accept(int fd) {
     return conn;
 }
 
-int main() {
+int main(int argc, char** argv) {
+    int port = 8080;
+    if(argc > 1){
+        char* end = nullptr;
+        long candidate = strtol(argv[1], &end, 10);
+        if(end == argv[1] || (end && *end != '\0') || candidate <= 0 || candidate > 65535){
+            std::cerr << "Invalid port argument: " << argv[1] << std::endl;
+            return -1;
+        }
+        port = static_cast<int>(candidate);
+    }
     int fd=socket(AF_INET, SOCK_STREAM, 0);
     if (fd==-1) {
         std::cout << "Error creating socket" << std::endl;
@@ -410,13 +423,18 @@ int main() {
     }
     fd_set_nb(fd);
     int val=1;
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val));
-    struct sockaddr_in server_addr;
+    if(setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val)) == -1){
+        msg_errno("setsockopt SO_REUSEADDR failed");
+        close(fd);
+        return -1;
+    }
+    struct sockaddr_in server_addr{};
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(8080);
-    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port = htons(static_cast<uint16_t>(port));
+    server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
     if (bind(fd, (struct sockaddr*)&server_addr, sizeof(server_addr))==-1) {
-        std::cout << "Error binding socket" << std::endl;
+        msg_errno("Error binding socket");
+        close(fd);
         return -1;
     }
     if (listen(fd, SOMAXCONN)==-1) {
@@ -438,7 +456,7 @@ int main() {
         return -1;
     }
 
-    std::cout << "Listening on port 8080" << std::endl;
+    std::cout << "Listening on port " << port << std::endl;
     std::vector<Conn*> fd2conn;
     std::vector<pollfd> pollf_args;
     while(true){

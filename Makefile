@@ -9,12 +9,15 @@ TEST_CPPFLAGS = $(CPPFLAGS) -I. -I$(TESTDIR)
 SRCDIR = src
 OBJDIR = obj
 TESTDIR = test
-SOURCES = $(wildcard $(SRCDIR)/*.cpp)
-OBJECTS = $(SOURCES:$(SRCDIR)/%.cpp=$(OBJDIR)/%.o)
-DEPS = $(OBJECTS:.o=.d)
+SERVER_SOURCES = $(filter-out $(SRCDIR)/client.cpp, $(wildcard $(SRCDIR)/*.cpp))
+SERVER_OBJECTS = $(SERVER_SOURCES:$(SRCDIR)/%.cpp=$(OBJDIR)/%.o)
+CLIENT_SOURCES = $(SRCDIR)/client.cpp
+CLIENT_OBJECTS = $(CLIENT_SOURCES:$(SRCDIR)/%.cpp=$(OBJDIR)/%.o)
+DEPS = $(SERVER_OBJECTS:.o=.d) $(CLIENT_OBJECTS:.o=.d)
 TARGET = server
+CLIENT = client
 
-.PHONY: all clean test test-avltree test-zset test-ttl test-threadpool test-zset-server run help
+.PHONY: all clean test test-avltree test-zset test-ttl test-threadpool test-zset-server run help client
 
 all: $(TARGET)
 
@@ -27,12 +30,15 @@ $(OBJDIR)/%.o: $(SRCDIR)/%.cpp | $(OBJDIR)
 	$(CXX) $(CXXFLAGS) $(CPPFLAGS) $(DEPFLAGS) -c $< -o $@
 
 # 链接生成可执行文件
-$(TARGET): $(OBJECTS)
+$(TARGET): $(SERVER_OBJECTS)
+	$(CXX) $(CXXFLAGS) $^ -o $@
+
+$(CLIENT): $(CLIENT_OBJECTS)
 	$(CXX) $(CXXFLAGS) $^ -o $@
 
 # 清理编译文件
 clean:
-	rm -rf $(OBJDIR) $(TARGET) test_avl_complete test_zset_complete test_ttl test_thread_pool test_zset_server
+	rm -rf $(OBJDIR) $(TARGET) $(CLIENT) test_avl_complete test_zset_complete test_ttl test_thread_pool test_zset_server
 
 # 编译并运行所有测试
 test: test-avltree test-zset test-ttl test-threadpool test-zset-server
@@ -87,6 +93,7 @@ help:
 	@echo "  all         - 编译项目（默认）"
 	@echo "  clean       - 清理编译文件"
 	@echo "  run         - 编译并运行服务器"
+	@echo "  client      - 编译客户端程序"
 	@echo "  test        - 运行所有测试"
 	@echo "  test-avltree- 运行AVL树完整测试"
 	@echo "  test-zset   - 运行ZSet完整测试"
